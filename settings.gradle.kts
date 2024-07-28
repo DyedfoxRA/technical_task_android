@@ -21,6 +21,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "userlist"
 include(":app")
-include(":common:network")
-include(":common:core")
-include(":features:user_list")
