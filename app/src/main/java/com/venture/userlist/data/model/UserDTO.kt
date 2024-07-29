@@ -10,3 +10,6 @@ data class UserDTO(
     val gender: String,
     val status: String,
 )
+
+// here I leave this data class and I am using this on every layer , but we need mapper here to use
+// data class from domain layer

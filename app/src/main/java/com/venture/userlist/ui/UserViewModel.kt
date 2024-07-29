@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.venture.userlist.data.model.UserDTO
 import com.venture.userlist.data.model.UserRequest
 import com.venture.userlist.domain.repo.UserRepository
+import com.venture.userlist.domain.results.BaseError
+import com.venture.userlist.domain.results.DataError
+import com.venture.userlist.domain.results.ResultResponse
 import com.venture.userlist.data.repo.UserResponse
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,7 +21,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import retrofit2.Response
 import javax.inject.Inject
 
 @HiltViewModel
@@ -26,67 +28,64 @@ class UserViewModel @Inject constructor(
     private val repository: UserRepository
 ) : ViewModel() {
 
-    private val _users = MutableStateFlow<List<UserDTO>>(emptyList())
-    val users: StateFlow<List<UserDTO>> = _users.asStateFlow()
-
-    private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    private val _users = MutableStateFlow<ResultResponse<List<UserDTO>, BaseError>>(ResultResponse.Idle)
+    val users: StateFlow<ResultResponse<List<UserDTO>, BaseError>> = _users.asStateFlow()
 
     private val _validationErrors = MutableStateFlow<Map<String, String>>(emptyMap())
     val validationErrors: StateFlow<Map<String, String>> = _validationErrors.asStateFlow()
 
     private var currentPage = 1
-    private var lastPageReached = false
-    private var firstPageReached = false
     private var totalPages = 1
+    private val userCache = mutableListOf<UserDTO>()
 
     init {
-        getLastPageUsers()
+        loadLastPageUsers()
     }
 
-    private fun getUsers(page: Int, appendToTop: Boolean = false) {
+    private fun loadUsers(page: Int) {
         viewModelScope.launch {
             repository.getUsers(page)
-                .onStart { _isLoading.value = true }
-                .catch { e -> _error.value = e.message }
+                .catch { e -> _users.value = ResultResponse.Error(DataError.Network.UNKNOWN) }
                 .collect { userResponse ->
-                    val newUsers = if (appendToTop) {
-                        (userResponse.users + _users.value).distinct()
-                    } else {
-                        (_users.value + userResponse.users).distinct()
+                    when (userResponse) {
+                        is ResultResponse.Loading -> _users.value = ResultResponse.Loading
+                        is ResultResponse.Success -> {
+                            userCache.addAll(userResponse.data.users)
+                            _users.value = ResultResponse.Success(userCache)
+                            totalPages = userResponse.data.totalPages
+                            currentPage = userResponse.data.currentPage
+                        }
+                        is ResultResponse.Error -> _users.value = userResponse
+                        else -> {}
                     }
-                    _users.value = newUsers
-                    totalPages = userResponse.totalPages
-                    currentPage = userResponse.currentPage
-                    lastPageReached = currentPage >= totalPages
-                    firstPageReached = currentPage == 1
-                    _isLoading.value = false
                 }
         }
     }
 
-    private fun getLastPageUsers() {
+    private fun loadLastPageUsers() {
         viewModelScope.launch {
             repository.getUsers(1)
-                .catch { e -> _error.value = e.message }
                 .collect { userResponse ->
-                    totalPages = userResponse.totalPages
-                    getUsers(totalPages)
+                    if (userResponse is ResultResponse.Success) {
+                        totalPages = userResponse.data.totalPages
+                        loadUsers(totalPages)
+                    } else {
+                        _users.value = ResultResponse.Error(DataError.Network.UNKNOWN)
+                    }
                 }
         }
     }
 
     fun loadMoreUsers() {
-        if (lastPageReached || _isLoading.value) return
-        getUsers(currentPage + 1)
+        if (currentPage < totalPages && !_users.value.isLoading()) {
+            loadUsers(currentPage + 1)
+        }
     }
 
     fun loadPreviousUsers() {
-        if (firstPageReached || _isLoading.value) return
-        getUsers(currentPage - 1, appendToTop = true)
+        if (currentPage > 1 && !_users.value.isLoading()) {
+            loadUsers(currentPage - 1)
+        }
     }
 
     suspend fun createUser(name: String, email: String, gender: String, status: String): Boolean {
@@ -94,27 +93,23 @@ class UserViewModel @Inject constructor(
         try {
             repository.createUser(UserRequest(name, email, gender, status))
                 .onStart {
-                    _isLoading.value = true
+                    _users.value = ResultResponse.Loading
                     _validationErrors.value = emptyMap()
                 }
                 .catch { e ->
                     val errorResponse = e.message?.let { parseErrorResponse(it) }
                     _validationErrors.value = errorResponse ?: emptyMap()
-                    _error.value = e.message
+                    _users.value = ResultResponse.Error(DataError.Network.UNKNOWN)
                 }
                 .collect { response ->
-                    if (response.isSuccessful) {
-                        response.body()?.let { newUser ->
-                            _users.value = _users.value + newUser
+                    when (response) {
+                        is ResultResponse.Success -> {
+                            userCache.add(response.data)
+                            _users.value = ResultResponse.Success(userCache)
+                            isSuccess = true
                         }
-                        _isLoading.value = false
-                        isSuccess = true
-                    } else {
-                        val errorResponse =
-                            response.errorBody()?.string()?.let { parseErrorResponse(it) }
-                        _validationErrors.value = errorResponse ?: emptyMap()
-                        _isLoading.value = false
-                        isSuccess = false
+                        is ResultResponse.Error -> _users.value = response
+                        else -> {}
                     }
                 }
         } catch (e: Exception) {
@@ -126,13 +121,19 @@ class UserViewModel @Inject constructor(
     fun deleteUser(user: UserDTO) {
         viewModelScope.launch {
             repository.deleteUser(user.id)
-                .onStart { _isLoading.value = true }
-                .catch { e -> _error.value = e.message }
-                .collect { success ->
-                    if (success) {
-                        _users.value -= user
+                .onStart { _users.value = ResultResponse.Loading }
+                .catch { e -> _users.value = ResultResponse.Error(DataError.Network.UNKNOWN) }
+                .collect { response ->
+                    when (response) {
+                        is ResultResponse.Success -> {
+                            if (response.data) {
+                                userCache.remove(user)
+                                _users.value = ResultResponse.Success(userCache)
+                            }
+                        }
+                        is ResultResponse.Error -> _users.value = response
+                        else -> {}
                     }
-                    _isLoading.value = false
                 }
         }
     }

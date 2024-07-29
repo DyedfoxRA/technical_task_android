@@ -56,6 +56,10 @@ android {
     }
 }
 
+tasks.withType<Test> {
+    useJUnitPlatform()
+}
+
 dependencies {
 
     implementation(libs.androidx.core.ktx)
@@ -69,6 +73,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.dagger.hilt.android)
     implementation(libs.androidx.hilt.navigation.compose)
+    testImplementation(libs.junit.jupiter)
     ksp(libs.dagger.hilt.compiler)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.retrofit)
@@ -78,6 +83,12 @@ dependencies {
     implementation(libs.logging.interceptor)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.accompanist.swiperefresh)
+
+    testImplementation(libs.junit.jupiter.api)
+    testRuntimeOnly(libs.junit.jupiter.engine)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.mockk.android)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

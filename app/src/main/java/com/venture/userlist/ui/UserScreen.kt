@@ -40,15 +40,16 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.google.accompanist.swiperefresh.SwipeRefresh
 import com.google.accompanist.swiperefresh.SwipeRefreshState
 import com.venture.userlist.data.model.UserDTO
+import com.venture.userlist.domain.results.BaseError
+import com.venture.userlist.domain.results.ResultResponse
+import com.venture.userlist.domain.ui.DisplayResult
 import com.venture.userlist.ui.UserViewModel
 import kotlinx.coroutines.launch
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
 fun UserScreen(viewModel: UserViewModel = hiltViewModel()) {
-    val users by viewModel.users.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val error by viewModel.error.collectAsState()
+    val usersState by viewModel.users.collectAsState()
     val validationErrors by viewModel.validationErrors.collectAsState()
 
     var showDialog by remember { mutableStateOf(false) }
@@ -76,32 +77,45 @@ fun UserScreen(viewModel: UserViewModel = hiltViewModel()) {
         }
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            val swipeRefreshState = remember { SwipeRefreshState(isLoading) }
+            val swipeRefreshState = remember { SwipeRefreshState(usersState.isLoading()) }
 
             SwipeRefresh(
                 state = swipeRefreshState,
                 onRefresh = { viewModel.loadPreviousUsers() },
                 modifier = Modifier.fillMaxSize()
             ) {
-                UserList(
-                    users = users,
-                    onDeleteUser = { user -> viewModel.deleteUser(user) },
-                    listState = listState,
-                    isLoadingMore = isLoading
+                usersState.DisplayResult(
+                    onIdle = { /* Do nothing */ },
+                    onLoading = {
+                        if (usersState.getSuccessDataOrNull().isNullOrEmpty()) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator()
+                            }
+                        }
+                    },
+                    onSuccess = { users ->
+                        UserList(
+                            users = users,
+                            onDeleteUser = { user -> viewModel.deleteUser(user) },
+                            listState = listState,
+                            isLoadingMore = usersState.isLoading()
+                        )
+                    },
+                    onError = { error ->
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(text = error.toString(), color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 )
             }
 
             LaunchedEffect(listState) {
                 snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
                     .collect { index ->
-                        if (index == users.size - 1) {
+                        if (index == usersState.getSuccessDataOrNull()?.size?.minus(1)) {
                             viewModel.loadMoreUsers()
                         }
                     }
-            }
-
-            if (isLoading && users.isEmpty()) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             }
         }
 
