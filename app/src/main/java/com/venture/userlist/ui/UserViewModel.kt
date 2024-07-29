@@ -40,22 +40,29 @@ class UserViewModel @Inject constructor(
 
     private var currentPage = 1
     private var lastPageReached = false
+    private var firstPageReached = false
     private var totalPages = 1
 
     init {
         getLastPageUsers()
     }
 
-    private fun getUsers(page: Int) {
+    private fun getUsers(page: Int, appendToTop: Boolean = false) {
         viewModelScope.launch {
             repository.getUsers(page)
                 .onStart { _isLoading.value = true }
                 .catch { e -> _error.value = e.message }
                 .collect { userResponse ->
-                    _users.value = userResponse.users
+                    val newUsers = if (appendToTop) {
+                        (userResponse.users + _users.value).distinct()
+                    } else {
+                        (_users.value + userResponse.users).distinct()
+                    }
+                    _users.value = newUsers
                     totalPages = userResponse.totalPages
                     currentPage = userResponse.currentPage
                     lastPageReached = currentPage >= totalPages
+                    firstPageReached = currentPage == 1
                     _isLoading.value = false
                 }
         }
@@ -64,6 +71,7 @@ class UserViewModel @Inject constructor(
     private fun getLastPageUsers() {
         viewModelScope.launch {
             repository.getUsers(1)
+                .catch { e -> _error.value = e.message }
                 .collect { userResponse ->
                     totalPages = userResponse.totalPages
                     getUsers(totalPages)
@@ -73,8 +81,12 @@ class UserViewModel @Inject constructor(
 
     fun loadMoreUsers() {
         if (lastPageReached || _isLoading.value) return
+        getUsers(currentPage + 1)
+    }
 
-        getUsers(++currentPage)
+    fun loadPreviousUsers() {
+        if (firstPageReached || _isLoading.value) return
+        getUsers(currentPage - 1, appendToTop = true)
     }
 
     suspend fun createUser(name: String, email: String, gender: String, status: String): Boolean {

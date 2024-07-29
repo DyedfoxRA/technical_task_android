@@ -23,7 +23,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -38,6 +37,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.google.accompanist.swiperefresh.SwipeRefresh
+import com.google.accompanist.swiperefresh.SwipeRefreshState
 import com.venture.userlist.data.model.UserDTO
 import com.venture.userlist.ui.UserViewModel
 import kotlinx.coroutines.launch
@@ -62,6 +63,9 @@ fun UserScreen(viewModel: UserViewModel = hiltViewModel()) {
         }
     }
 
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
     Scaffold(
         floatingActionButton = {
             FloatingActionButton(onClick = {
@@ -72,8 +76,20 @@ fun UserScreen(viewModel: UserViewModel = hiltViewModel()) {
         }
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            val listState = rememberLazyListState()
-            val scope = rememberCoroutineScope()
+            val swipeRefreshState = remember { SwipeRefreshState(isLoading) }
+
+            SwipeRefresh(
+                state = swipeRefreshState,
+                onRefresh = { viewModel.loadPreviousUsers() },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                UserList(
+                    users = users,
+                    onDeleteUser = { user -> viewModel.deleteUser(user) },
+                    listState = listState,
+                    isLoadingMore = isLoading
+                )
+            }
 
             LaunchedEffect(listState) {
                 snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
@@ -86,10 +102,6 @@ fun UserScreen(viewModel: UserViewModel = hiltViewModel()) {
 
             if (isLoading && users.isEmpty()) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-            } else {
-                UserList(users = users, onDeleteUser = { user ->
-                    viewModel.deleteUser(user)
-                }, listState = listState, isLoadingMore = isLoading)
             }
         }
 
